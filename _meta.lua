@@ -21,7 +21,7 @@ return {
 Features:
 • Word-by-word highlighting as text is read
 • Sentence highlighting option
-• Multiple TTS engine support (espeak-ng, Piper neural, sanoTTS neural, Pico, Flite, Festival, Android, platform-native helper)
+• Multiple TTS engine support (Kokoro server, espeak-ng, Piper neural, sanoTTS neural, Pico, Flite, Festival, Android, platform-native helper)
 • Adjustable speech rate (0.25x to 2.0x), pitch, and volume
 • Auto-advance pages
 • Multiple highlight styles (background, underline, box, invert)

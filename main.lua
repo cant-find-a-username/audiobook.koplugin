@@ -378,6 +378,16 @@ function Audiobook:_initSubmodules()
                 end
                 return nil  -- default cap
             end
+            -- Kokoro: optionally speak several sentences in one request.
+            -- 1 keeps the normal one-sentence clips.
+            self.text_parser.group_sentences_fn = function()
+                local b = self.tts_engine and self.tts_engine.backend
+                local B = self.tts_engine and self.tts_engine.BACKENDS
+                if not (B and b == B.KOKORO) then
+                    return 1
+                end
+                return self:getSetting("kokoro_sentence_group", 1)
+            end
             self.highlight_manager = HighlightManager:new{
                 plugin = self,
                 ui = self.ui,

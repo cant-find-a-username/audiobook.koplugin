@@ -718,6 +718,39 @@ function SyncController:readNextSentence()
         return
     end
 
+    -- Kokoro prefetch is one request. Wait if that clip is still generating.
+    if self.tts_engine.backend == self.tts_engine.BACKENDS.KOKORO
+            and self.tts_engine._kokoro
+            and self.tts_engine._kokoro:prefetchStatus(sentence.text) == "inflight" then
+        local waited_ms = 0
+        local my_wait_gen = self._chain_generation or 0
+        local function waitForKokoro()
+            if self.state == self.STATE.STOPPED then return end
+            if (self._chain_generation or 0) ~= my_wait_gen then return end
+            local st = self.tts_engine._kokoro:prefetchStatus(sentence.text)
+            if st == "ready" and self.tts_engine:usePrefetched(sentence.text) then
+                controller:applySentenceTiming(sentence, self.tts_engine.timing_data)
+                controller:beginSentencePlayback(sentence)
+                return
+            end
+            if st ~= "inflight" or waited_ms >= 90000 then
+                controller.tts_engine:synthesize(sentence.text, function(synth_success, timing_data)
+                    if not synth_success then
+                        controller:stop()
+                        return
+                    end
+                    controller:applySentenceTiming(sentence, timing_data)
+                    controller:beginSentencePlayback(sentence)
+                end)
+                return
+            end
+            waited_ms = waited_ms + 250
+            UIManager:scheduleIn(0.25, waitForKokoro)
+        end
+        waitForKokoro()
+        return
+    end
+
     -- For Piper: if a prefetch is pending/queued, wait for it instead of
     -- launching a duplicate synthesis (which wastes ~11s and RAM).
     local piper_status = self.tts_engine:getPiperPrefetchStatus(sentence.text)
@@ -1036,6 +1069,8 @@ function SyncController:readNextSentence()
                 -- for RAM. One miss can be a page-turn race: retry the same
                 -- sentence; several in a row means the engine is gone (stop).
                 controller:_onAndroidSynthFailed("synthesize callback")
+            elseif controller.tts_engine.backend == controller.tts_engine.BACKENDS.KOKORO then
+                controller:stop()
             else
                 controller:readNextSentence()
             end
@@ -1227,8 +1262,9 @@ function SyncController:beginSentencePlayback(sentence)
             -- trailing-gap code after the loop handles the final padding.
             local pf_file, pf_timing, pf_dur = self.tts_engine:peekPrefetch(sent.text)
             if not pf_file then
-                if self.tts_engine.backend == self.tts_engine.BACKENDS.PIPER or self.tts_engine.backend == self.tts_engine.BACKENDS.SANOTTS then
-                    logger.warn("SyncController: Concat: Piper sentence", idx, "not ready yet, stopping concat")
+                if self.tts_engine.backend == self.tts_engine.BACKENDS.PIPER
+                        or self.tts_engine.backend == self.tts_engine.BACKENDS.SANOTTS then
+                    logger.warn("SyncController: Concat: sentence", idx, "not ready yet, stopping concat")
                     break
                 end
                 self.tts_engine:prefetch(sent.text)

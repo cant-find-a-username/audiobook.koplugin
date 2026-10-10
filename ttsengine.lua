@@ -50,6 +50,7 @@ local Utils = dofile(_utils_dir .. "utils.lua")
 local WavUtils = dofile(_utils_dir .. "wavutils.lua")
 local PiperQueue = dofile(_utils_dir .. "piperqueue.lua")
 local AndroidTts = dofile(_utils_dir .. "androidtts.lua")
+local Kokoro = dofile(_utils_dir .. "kokoro.lua")
 local TTSEngine = {
     -- Supported TTS backends
     BACKENDS = {
@@ -63,6 +64,7 @@ local TTSEngine = {
         SANOTTS_JP = "sanotts-jp",
         KINDLE_NATIVE = "kindle-native",
         NATIVE = "platform-native",
+        KOKORO = "kokoro",
     },
     -- Default settings
     DEFAULT_RATE = 1.0,
@@ -144,6 +146,7 @@ function TTSEngine:new(o)
     o._prefetch_text = nil
     -- Piper async prefetch queue (extracted module)
     o._piper = PiperQueue:new{engine = o}
+    o._kokoro = Kokoro:new(o)
     -- Android TTS wrapper (initialized lazily in detectBackend)
     o._android_tts = nil
     -- Platform-native TTS daemon PID (only used in daemon/FIFO mode)
@@ -1102,7 +1105,9 @@ function TTSEngine:synthesizeCommand(text, callback)
     -- buffer overflow.  MBROLA's internal buffer is small; very long
     -- input can cause playback artifacts on some firmware.
     local max_text_len = 1000
-    if self.voice and self.voice:match("^mb%-") then
+    if self.backend == self.BACKENDS.KOKORO then
+        max_text_len = 4000
+    elseif self.voice and self.voice:match("^mb%-") then
         max_text_len = 300
     end
     if #text > max_text_len then
@@ -1142,6 +1147,9 @@ function TTSEngine:synthesizeCommand(text, callback)
                 end
             end
         end
+    end
+    if self.backend == self.BACKENDS.KOKORO then
+        return self._kokoro:synthesize(text, audio_file, callback, false)
     end
     if self.backend == self.BACKENDS.ESPEAK then
         -- espeak-ng supports word timing output
@@ -1839,6 +1847,7 @@ function TTSEngine:generateTimingEstimates(text)
         or self.backend == self.BACKENDS.SANOTTS
         or self.backend == self.BACKENDS.SANOTTS_JP
         or self.backend == self.BACKENDS.ANDROID
+        or self.backend == self.BACKENDS.KOKORO
     while pos <= #text do
         -- Skip whitespace
         while pos <= #text and text:sub(pos, pos):match("%s") do
@@ -2035,6 +2044,9 @@ function TTSEngine:prefetch(text, use_espeak)
     -- same slot from its own background completion instead.
     if self.backend == self.BACKENDS.ANDROID then
         return self:prefetchAndroid(text)
+    end
+    if self.backend == self.BACKENDS.KOKORO then
+        return self._kokoro:prefetch(text)
     end
     -- Piper/sanoTTS: delegate to the async queue-based prefetcher
     if (self.backend == self.BACKENDS.PIPER or self.backend == self.BACKENDS.SANOTTS
@@ -2233,7 +2245,7 @@ Check if prefetched audio matches the given text and swap it in.
 @return boolean true if prefetch was used
 --]]
 function TTSEngine:usePrefetched(text)
-    -- Check single-slot prefetch (espeak-ng)
+    -- Check single-slot prefetch (espeak-ng, Kokoro)
     if self._prefetch_file and self._prefetch_text == text then
         if self.current_audio_file then
             os.remove(self.current_audio_file)
@@ -2275,7 +2287,7 @@ _cleanPrefetch() when the file is no longer needed.
 @return number      Duration in ms
 --]]
 function TTSEngine:peekPrefetch(text)
-    -- Check single-slot prefetch (espeak-ng)
+    -- Check single-slot prefetch (espeak-ng, Kokoro)
     if self._prefetch_file and self._prefetch_text == text then
         local dur = self:getWavDurationMs(self._prefetch_file)
         return self._prefetch_file, self._prefetch_timing, dur
@@ -2323,6 +2335,9 @@ function TTSEngine:_cleanPrefetch()
     self._prefetch_in_use = false
     -- Clean Piper async queue
     self._piper:cleanQueue()
+    if self._kokoro then
+        self._kokoro:cancel()
+    end
 end
 -- Persistent BT pipeline retry and error handling.
 -- These limit how often we retry the pipeline, prevent rapid retry loops
