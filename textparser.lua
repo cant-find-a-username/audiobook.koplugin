@@ -62,9 +62,18 @@ function TextParser:parse(text)
         max_chunk = self.max_chunk_fn() or MAX_CHUNK_CHARS
     end
 
+    local sentences = self:parseSentences(text, max_chunk)
+    local group_n = 1
+    if self.group_sentences_fn then
+        group_n = tonumber(self.group_sentences_fn()) or 1
+    end
+    if group_n > 1 then
+        sentences = self:groupSentences(sentences, text, group_n, 4000)
+    end
+
     local result = {
         text = text,
-        sentences = self:parseSentences(text, max_chunk),
+        sentences = sentences,
         words = self:parseWords(text),
     }
     
@@ -277,6 +286,62 @@ function TextParser:parseSentences(text, max_chunk)
     end
 
     return sentences
+end
+
+--- Join consecutive sentences into longer clips.
+-- group_n of 1 leaves the list unchanged. A group stops early when the
+-- joined text would pass max_chars.
+function TextParser:groupSentences(sentences, source_text, group_n, max_chars)
+    if not group_n or group_n <= 1 or not sentences or #sentences == 0 then
+        return sentences
+    end
+    max_chars = max_chars or 4000
+    local grouped = {}
+    local i = 1
+    local new_index = 1
+    while i <= #sentences do
+        local first = sentences[i]
+        local last = first
+        local count = 1
+        local j = i + 1
+        local positions_ok = first.start_pos and first.start_pos >= 1
+        while positions_ok and j <= #sentences and count < group_n do
+            local cand = sentences[j]
+            if not cand.end_pos then
+                break
+            end
+            if #(source_text:sub(first.start_pos, cand.end_pos)) > max_chars then
+                break
+            end
+            last = cand
+            count = count + 1
+            j = j + 1
+        end
+        local text_span
+        if first.start_pos and last.end_pos and first.start_pos >= 1 then
+            text_span = source_text:sub(first.start_pos, last.end_pos)
+            text_span = text_span:gsub("%s+", " ")
+            text_span = text_span:match("^%s*(.-)%s*$")
+        end
+        if not text_span or text_span == "" then
+            text_span = first.text
+        end
+        table.insert(grouped, {
+            index = new_index,
+            text = text_span,
+            start_pos = first.start_pos,
+            end_pos = last.end_pos,
+            words = {},
+            end_type = last.end_type,
+        })
+        new_index = new_index + 1
+        if positions_ok then
+            i = j
+        else
+            i = i + 1
+        end
+    end
+    return grouped
 end
 
 --[[--

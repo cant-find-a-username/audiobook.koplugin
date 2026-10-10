@@ -70,6 +70,7 @@ function MenuBuilder.buildVoiceSettingsMenu(plugin)
                 festival = _("Festival"),
                 android = MenuBuilder.systemTtsMenuLabel(plugin),
                 ["platform-native"] = _("Platform-native helper"),
+                kokoro = _("Kokoro (server)"),
             }
             return T(_("TTS engine: %1"), labels[backend] or backend)
         end,
@@ -77,6 +78,15 @@ function MenuBuilder.buildVoiceSettingsMenu(plugin)
             return MenuBuilder.buildEngineSelectMenu(plugin)
         end,
     })
+
+    if plugin.tts_engine and plugin.tts_engine.backend == plugin.tts_engine.BACKENDS.KOKORO then
+        table.insert(menu, {
+            text = _("Kokoro server"),
+            sub_item_table_func = function()
+                return MenuBuilder.buildKokoroSettingsMenu(plugin)
+            end,
+        })
+    end
 
     -- Platform-native helper settings (only visible when that backend is active).
     if plugin.tts_engine and plugin.tts_engine.backend == plugin.tts_engine.BACKENDS.NATIVE then
@@ -895,6 +905,172 @@ function MenuBuilder.buildHighlightStyleMenu(plugin)
 end
 
 --[[--
+Kokoro server URL and voice. Shown only while the Kokoro engine is selected.
+--]]
+function MenuBuilder.buildKokoroSettingsMenu(plugin)
+    local menu = {}
+
+    table.insert(menu, {
+        text_func = function()
+            local url = plugin:getSetting("kokoro_url", "")
+            if url == "" then
+                return _("Server URL: not set")
+            end
+            return T(_("Server URL: %1"), url)
+        end,
+        callback = function(touchmenu_instance)
+            MenuBuilder._showKokoroUrlDialog(plugin, touchmenu_instance)
+        end,
+    })
+
+    table.insert(menu, {
+        text_func = function()
+            return T(_("Voice: %1"), plugin:getSetting("kokoro_voice", "af_heart"))
+        end,
+        sub_item_table_func = function()
+            return MenuBuilder.buildKokoroVoiceMenu(plugin)
+        end,
+    })
+
+    table.insert(menu, {
+        text_func = function()
+            local n = tonumber(plugin:getSetting("kokoro_sentence_group", 1)) or 1
+            if n <= 1 then
+                return _("Sentences per clip: 1 (default)")
+            end
+            return T(_("Sentences per clip: %1"), n)
+        end,
+        sub_item_table_func = function()
+            return MenuBuilder.buildKokoroSentenceMenu(plugin)
+        end,
+    })
+
+    return menu
+end
+
+function MenuBuilder.buildKokoroSentenceMenu(plugin)
+    local menu = {}
+    -- Do not name the loop index "_": that name is the translation function.
+    local choices = { 1, 2, 3, 5, 8 }
+    for _i, n in ipairs(choices) do
+        local count = n
+        local label = tostring(count)
+        if count == 1 then
+            label = label .. _(" (default)")
+        end
+        table.insert(menu, {
+            text = label,
+            checked_func = function()
+                local cur = tonumber(plugin:getSetting("kokoro_sentence_group", 1)) or 1
+                return cur == count
+            end,
+            callback = function()
+                plugin:setSetting("kokoro_sentence_group", count)
+            end,
+        })
+    end
+    return menu
+end
+
+function MenuBuilder.buildKokoroVoiceMenu(plugin)
+    local menu = {}
+    local Kokoro = plugin.tts_engine and plugin.tts_engine._kokoro
+    local voices = (Kokoro and Kokoro.VOICES) or {}
+    for _, voice in ipairs(voices) do
+        table.insert(menu, {
+            text = voice.label .. " (" .. voice.id .. ")",
+            checked_func = function()
+                return plugin:getSetting("kokoro_voice", "af_heart") == voice.id
+            end,
+            callback = function()
+                plugin:setSetting("kokoro_voice", voice.id)
+            end,
+        })
+    end
+    table.insert(menu, {
+        text = _("Custom voice id…"),
+        callback = function(touchmenu_instance)
+            MenuBuilder._showKokoroVoiceDialog(plugin, touchmenu_instance)
+        end,
+    })
+    return menu
+end
+
+function MenuBuilder._showKokoroUrlDialog(plugin, touchmenu_instance)
+    local InputDialog = require("ui/widget/inputdialog")
+    local current = plugin:getSetting("kokoro_url", "")
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Kokoro server URL"),
+        input = current,
+        input_hint = "http://203.0.113.10:8880",
+        description = _("Public address of the Kokoro-FastAPI server, without a path."),
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    callback = function()
+                        UIManager:close(dialog)
+                    end,
+                },
+                {
+                    text = _("Save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local url = dialog:getInputText() or ""
+                        url = url:gsub("%s+", ""):gsub("/+$", "")
+                        url = url:gsub("/v1/audio/speech$", ""):gsub("/v1$", "")
+                        plugin:setSetting("kokoro_url", url)
+                        UIManager:close(dialog)
+                        if touchmenu_instance then
+                            touchmenu_instance:updateItems()
+                        end
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function MenuBuilder._showKokoroVoiceDialog(plugin, touchmenu_instance)
+    local InputDialog = require("ui/widget/inputdialog")
+    local current = plugin:getSetting("kokoro_voice", "af_heart")
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Kokoro voice id"),
+        input = current,
+        input_hint = "af_heart",
+        description = _("A voice id from the Kokoro server, such as af_heart or am_michael."),
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    callback = function()
+                        UIManager:close(dialog)
+                    end,
+                },
+                {
+                    text = _("Save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local voice = dialog:getInputText() or ""
+                        voice = voice:gsub("%s+", "")
+                        if voice == "" then voice = "af_heart" end
+                        plugin:setSetting("kokoro_voice", voice)
+                        UIManager:close(dialog)
+                        if touchmenu_instance then
+                            touchmenu_instance:updateItems()
+                        end
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
 Build TTS engine selection menu.
 Lists all detected backends so the user can switch between espeak-ng and Piper.
 --]]
@@ -918,6 +1094,11 @@ function MenuBuilder.buildEngineSelectMenu(plugin)
             label = MenuBuilder.systemTtsAndroidChoiceLabel(plugin),
         })
     end
+
+    table.insert(available, {
+        id = engine.BACKENDS.KOKORO,
+        label = _("Kokoro (server, natural)"),
+    })
 
     -- espeak-ng: available if we detected it during init
     if engine.espeak_lib_path or Utils.commandExists("espeak-ng") or Utils.commandExists("espeak") then
