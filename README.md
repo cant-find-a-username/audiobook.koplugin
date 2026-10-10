@@ -1,3 +1,5 @@
+> Fork of [stradichenko/audiobook.koplugin](https://github.com/stradichenko/audiobook.koplugin) with [Kokoro](https://github.com/remsky/Kokoro-FastAPI) server TTS added. The rest of this README describes the upstream plugin.
+
 <p align="center">
   <img src="new_audio_logo.svg" alt="Audiobook Read-Along logo" width="200">
 </p>
